@@ -50,7 +50,15 @@
     display: flex; align-items: center; gap: 0;
     height: 56px;
   }
-  .logo-img { height: 56px; width: auto; object-fit: contain; }
+  .logo-img {
+    height: 56px; width: auto; object-fit: contain;
+    touch-action: manipulation;
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+  }
   .brand-sep { width: 1px; height: 32px; background: var(--border); margin: 0 14px; }
   .brand-text h1 { font-size: 15px; font-weight: 700; color: var(--violet); line-height: 1.2; }
   .brand-text span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.07em; }
@@ -453,7 +461,7 @@
     <div class="form-grid three">
       <div class="form-group">
         <label class="required" for="article">Nom de l'article</label>
-        <input type="text" id="article" placeholder="Ex : Barcelone" autocomplete="off">
+        <input type="text" id="article" placeholder="Barcelone" autocomplete="off">
       </div>
       <div class="form-group">
         <label class="required" for="quantite">Quantité</label>
@@ -554,10 +562,10 @@
 // Créez-le sur console.cloud.google.com → APIs & Services → Credentials
 // → Create Credentials → OAuth Client ID → Web application
 // Ajoutez l'URL de la page dans "Authorized JavaScript origins"
-const GOOGLE_CLIENT_ID = "594296218368-seu52pmatmf14p1spqb84i3bt4alda7l.apps.googleusercontent.com";
+const GOOGLE_CLIENT_ID = "VOTRE_CLIENT_ID.apps.googleusercontent.com";
 
 // Adresse Gmail qui REÇOIT les données des agences
-const GMAIL_DEST = "buzzdesigncm@gmail.com";
+const GMAIL_DEST = "bi.buzzdesign@gmail.com";
 
 // ─── CLÉ DE CHIFFREMENT ───────────────────────────────────────────
 // Stockée UNIQUEMENT dans le localStorage de Chrome sur cette tablette.
@@ -570,27 +578,40 @@ const STORAGE_KEY_NAME = "bd_bi_crypt_key";
 // (ce qui arrive avec certaines URLs content:// sur Android)
 
 function setCryptKey(v) {
+  // 1. localStorage (principal)
   try { localStorage.setItem(STORAGE_KEY_NAME, v); } catch(e) {}
-  // Cookie valide 90 jours, chemin /
-  const exp = new Date(Date.now() + 90*24*3600*1000).toUTCString();
+  // 2. sessionStorage (survit au rechargement de page)
+  try { sessionStorage.setItem(STORAGE_KEY_NAME, v); } catch(e) {}
+  // 3. Cookie 365 jours, SameSite=Lax (compatible GitHub Pages + Android)
+  const exp = new Date(Date.now() + 365*24*3600*1000).toUTCString();
   document.cookie = STORAGE_KEY_NAME + "=" + encodeURIComponent(v)
-                  + "; expires=" + exp + "; path=/; SameSite=Strict";
+                  + "; expires=" + exp + "; path=/; SameSite=Lax";
 }
 
 function getCryptKey() {
-  // 1. Essayer localStorage en premier
+  // 1. localStorage (le plus rapide)
   try {
     const ls = localStorage.getItem(STORAGE_KEY_NAME);
     if (ls && ls.length >= 8) return ls;
   } catch(e) {}
-  // 2. Fallback : lire depuis le cookie
+  // 2. sessionStorage (survit aux rechargements, même si localStorage vidé)
+  try {
+    const ss = sessionStorage.getItem(STORAGE_KEY_NAME);
+    if (ss && ss.length >= 8) {
+      // Resynchroniser localStorage
+      try { localStorage.setItem(STORAGE_KEY_NAME, ss); } catch(e) {}
+      return ss;
+    }
+  } catch(e) {}
+  // 3. Cookie (persist 365 jours, fallback ultime)
   const name = STORAGE_KEY_NAME + "=";
   for (const part of document.cookie.split(";")) {
     const p = part.trim();
     if (p.startsWith(name)) {
       const val = decodeURIComponent(p.slice(name.length));
-      // Resynchroniser le localStorage si possible
+      // Resynchroniser localStorage et sessionStorage
       try { localStorage.setItem(STORAGE_KEY_NAME, val); } catch(e) {}
+      try { sessionStorage.setItem(STORAGE_KEY_NAME, val); } catch(e) {}
       return val;
     }
   }
@@ -1013,70 +1034,77 @@ document.getElementById("modalPin").addEventListener("click", function(e) {
   if (e.target === this) fermerPinModal();
 });
 
-// ── STOCKAGE DUAL (localStorage + cookie 365 jours) ───────
-function setCryptKey(v) {
-  try { localStorage.setItem(STORAGE_KEY_NAME, v); } catch(e) {}
-  const exp = new Date(Date.now() + 365 * 24 * 3600 * 1000).toUTCString();
-  document.cookie = STORAGE_KEY_NAME + "=" + encodeURIComponent(v)
-                  + "; expires=" + exp + "; path=/; SameSite=Strict";
-}
-
-function getCryptKey() {
-  // 1. localStorage
-  try {
-    const ls = localStorage.getItem(STORAGE_KEY_NAME);
-    if (ls && ls.length >= 8) return ls;
-  } catch(e) {}
-  // 2. Fallback cookie
-  const name = STORAGE_KEY_NAME + "=";
-  for (const part of document.cookie.split(";")) {
-    const p = part.trim();
-    if (p.startsWith(name)) {
-      const val = decodeURIComponent(p.slice(name.length));
-      try { localStorage.setItem(STORAGE_KEY_NAME, val); } catch(e) {}
-      return val;
-    }
-  }
-  return "";
-}
-
-function hasCryptKey() {
-  const k = getCryptKey();
-  return k && k.length >= 8;
-}
+// [Fonctions de stockage définies plus haut]
 
 // ── BANDEAU D'ÉTAT (visible seulement si clé absente) ─────
 function majEtatCle() {
   const banner = document.getElementById("keyBanner");
   if (!banner) return;
-  if (hasCryptKey()) {
-    // Clé présente → bandeau complètement masqué
+
+  const clePresente = hasCryptKey();
+
+  // Debug console — visible dans les DevTools de Chrome (F12 → Console)
+  console.log("[BuzzDesign BI] Clé présente :", clePresente,
+              "| localStorage :", (function() {
+                try { return !!localStorage.getItem(STORAGE_KEY_NAME); }
+                catch(e) { return "bloqué"; }
+              })(),
+              "| sessionStorage :", (function() {
+                try { return !!sessionStorage.getItem(STORAGE_KEY_NAME); }
+                catch(e) { return "bloqué"; }
+              })()
+  );
+
+  if (clePresente) {
+    // Clé présente → bandeau masqué, page prête à l'envoi
     banner.classList.add("configured");
   } else {
-    // Clé absente → bandeau d'avertissement visible
+    // Clé absente → afficher le bandeau d'avertissement
     banner.classList.remove("configured");
-    document.getElementById("keyLabel").textContent =
-      "Configuration requise avant le premier envoi";
+    const lbl = document.getElementById("keyLabel");
+    if (lbl) lbl.textContent = "Configuration requise avant le premier envoi";
   }
 }
 
-// ── TRIPLE-CLIC SUR LE LOGO → accès admin discret ─────────
+// ── TRIPLE-TAP SUR LE LOGO → accès admin discret ──────────
+// Compatible tablette Android : écoute touchend ET click
+// touch-action:manipulation appliqué au logo (voir CSS)
 (function() {
-  let clickCount = 0;
-  let clickTimer = null;
-  const logo = document.getElementById("logoImg");
-  if (!logo) return;
+  let tapCount = 0;
+  let tapTimer = null;
 
-  logo.addEventListener("click", function() {
-    clickCount++;
-    clearTimeout(clickTimer);
-    clickTimer = setTimeout(function() { clickCount = 0; }, 800);
-    if (clickCount >= 3) {
-      clickCount = 0;
-      clearTimeout(clickTimer);
-      ouvrirPinModal();   // 3 clics → demander le PIN admin
+  function handleTap(e) {
+    // Bloquer le comportement par défaut (évite zoom Android)
+    e.preventDefault();
+    tapCount++;
+    clearTimeout(tapTimer);
+    // Fenêtre de 1200ms — plus confortable sur tablette
+    tapTimer = setTimeout(function() { tapCount = 0; }, 1200);
+    if (tapCount >= 3) {
+      tapCount = 0;
+      clearTimeout(tapTimer);
+      ouvrirPinModal();
     }
-  });
+  }
+
+  // Attendre que le DOM soit complètement chargé
+  function attacherLogo() {
+    const logo = document.getElementById("logoImg");
+    if (!logo) {
+      // Réessayer si le DOM n'est pas encore prêt
+      setTimeout(attacherLogo, 100);
+      return;
+    }
+    // Écouter touchend (mobile/tablette) ET click (desktop)
+    logo.addEventListener("touchend", handleTap, { passive: false });
+    logo.addEventListener("click",    handleTap);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", attacherLogo);
+  } else {
+    attacherLogo();
+  }
 })();
 
 // ── MODAL CONFIGURATION CLÉ ───────────────────────────────
@@ -1148,8 +1176,19 @@ document.getElementById("modalKey").addEventListener("click", function(e) {
   if (e.target === this) fermerModalCle();
 });
 
-// ── Initialisation au chargement
-majEtatCle();
+// ── Initialisation au chargement de la page
+// DOMContentLoaded garantit que tous les éléments HTML existent
+// avant d'appeler majEtatCle() (évite les erreurs "element is null")
+function initialiserPage() {
+  majEtatCle();   // Afficher ou masquer le bandeau selon la clé stockée
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initialiserPage);
+} else {
+  // DOM déjà prêt (script en fin de body)
+  initialiserPage();
+}
 
 </script>
 
